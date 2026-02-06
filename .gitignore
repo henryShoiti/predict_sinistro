@@ -1,0 +1,13 @@
+# Datasets pesados
+data/
+
+# Logs
+mlruns/
+
+# Caches do Python
+__pycache__/
+*.pyc
+
+# Ambientes
+venv/
+.env
