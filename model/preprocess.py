@@ -64,11 +64,14 @@ class data_types(base.BaseEstimator, base.TransformerMixin):
         return X
     
 class new_features(base.BaseEstimator, base.TransformerMixin):
-    def __init__(self, features):
-        self.features = features
+    def __init__(self):
+        pass
+
     def fit(self, X, y=None):
         return self
+    
     def transform(self, X):
+        X = X.copy()
         ## Período do dia que ocorreu o acidente
         ## Temos a ideia de que acidentes na madrugada tendem a ser mais graves
         X['periodo_dia'] = X['hora_sinistro'].apply(create_periodos)
@@ -106,7 +109,5 @@ class new_features(base.BaseEstimator, base.TransformerMixin):
         to_drop= ['data_sinistro','hora_sinistro'] + gravidade
         X = X.drop(columns=to_drop)
         
-        if self.features:
-            return X[self.features]
         return X
 
