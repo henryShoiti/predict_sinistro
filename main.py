@@ -5,15 +5,8 @@ import seaborn as sns
 import numpy as np
 import matplotlib.pyplot as plt
 
-from sklearn import model_selection
-from sklearn import impute 
-from sklearn import preprocessing
-from sklearn import compose
-from sklearn import metrics
-from sklearn import ensemble
-from sklearn import pipeline
-from sklearn import dummy
-from sklearn import tree
+from sklearn import(model_selection, impute , preprocessing, compose, metrics,
+                    ensemble, pipeline, dummy, tree, feature_selection)
 import mlflow
 import joblib
 
@@ -22,10 +15,18 @@ import joblib
 pd.set_option('display.max_columns', None)
 sns.set_theme(style='whitegrid')
 
+#%% iniciando log de resultados dos modelos
+mlflow.set_tracking_uri('http://localhost:5000')
 
+mlflow.set_experiment("Sinistro")
 #%%
+# Import
 ## fontes dos dados: https://dadosabertos.sp.gov.br/dataset/sinistros-infosiga
-raw = pd.read_csv('data/sinistros_2022-2025.csv', encoding='latin-1', on_bad_lines='skip', sep=';', decimal=',')
+raw = pd.read_csv('data/sinistros_2022-2025.csv', 
+                  encoding='latin-1', 
+                  on_bad_lines='skip', 
+                  sep=';', 
+                  decimal=',')
 sinistro = raw.copy()
 
 
@@ -49,7 +50,6 @@ sinistro.info()
 
 #%%
 ## removendo linhas duplicadas e colunas não desejadas
-list(sinistro.columns)
 to_remove = ['id_sinistro', 'tipo_acidente_primario',
              'ano_mes_sinistro', 'ano_sinistro',
              'logradouro', 'numero_logradouro',
@@ -72,11 +72,6 @@ tipos = [col for col in sinistro.columns if col.startswith('tp_sinistro_')]
 for col in tipos:
     sinistro[col] = sinistro[col].replace('S','1')
     sinistro[col] = pd.to_numeric(sinistro[col], errors='coerce')
-
-
-#%% 
-# % de valores nulos em 'hora_sinistro'
-print((sinistro['hora_sinistro'].isnull().sum()/len(sinistro)) * 100,'%')
 
 
 #%%
@@ -160,12 +155,6 @@ sinistro['pessoas_por_veiculos'] = sinistro['pessoas_por_veiculos'].fillna(0)
 
 
 #%% 
-# separando nome das colunas objects e numericos
-cat_cols = sinistro.select_dtypes('object').columns.to_list()
-num_cols = sinistro.select_dtypes(include=['int64','float64']).columns.to_list()
-
-
-#%% 
 # Split
 target = 'acidente_grave'
 X = sinistro.drop(columns=[target])
@@ -176,14 +165,14 @@ X_train, X_test, y_train, y_test = model_selection.train_test_split(X, y,
                                                                     random_state=42,
                                                                     stratify=y)
 
-
 #%%
 # Treinamento
 ## nomes das colunas numéricas e categóricas
 num_cols = X_train.select_dtypes(include=['int64','float64']).columns
 cat_cols = X_train.select_dtypes(include=['object']).columns
 
-## Pipelines
+#%% 
+# Pipelines
 num_pipeline = pipeline.Pipeline([
     ('scaler', preprocessing.RobustScaler()),
 ])
@@ -200,20 +189,79 @@ preprocessor = compose.ColumnTransformer(
     ]
 )
 
+select_features = feature_selection.SelectKBest(score_func=feature_selection.mutual_info_classif, k=17)
+
 model = ensemble.RandomForestClassifier(random_state=42,
                                         class_weight='balanced',
-                                        max_depth=3,
-                                        min_samples_split=6,
-                                        n_estimators=6)
-# {'model__max_depth': 9, 'model__min_samples_split': 6, 'model__n_estimators': 17}
-# {'model__max_depth': 3, 'model__min_samples_split': 10, 'model__n_estimators': 14}
-# {'model__max_depth': 4, 'model__min_samples_split': 8, 'model__n_estimators': 6}
-# {'model__max_depth': 3, 'model__min_samples_split': 12, 'model__n_estimators': 3}
-# {'model__max_depth': 3, 'model__min_samples_split': 6, 'model__n_estimators': 6} -> Best
+                                        max_depth=15,
+                                        min_samples_split=15,
+                                        min_samples_leaf=2,
+                                        n_estimators=100,
+                                        n_jobs=1,)
+# {'rnd_forest__max_depth': 14, 'rnd_forest__min_samples_leaf': 2, 'rnd_forest__min_samples_split': 6, 'rnd_forest__n_estimators': 408}
+# {'rnd_forest__max_depth': 12, 'rnd_forest__min_samples_leaf': 2, 'rnd_forest__min_samples_split': 16, 'rnd_forest__n_estimators': 125}
+# {'rnd_forest__max_depth': 15, 'rnd_forest__min_samples_leaf': 2, 'rnd_forest__min_samples_split': 15, 'rnd_forest__n_estimators': 300}
 pipe = pipeline.Pipeline([
     ('preprocessor',preprocessor),
-    ('rnd_forest', model)
+    ('best_features', select_features),
+    ('rnd_forest', model),
 ])
+
+
+#%% 
+# Achando as melhores features para simplificar o modelo
+# best_model = pipe.named_steps['rnd_forest']
+# features = pipe.named_steps['preprocessor'].get_feature_names_out()
+# importances = best_model.feature_importances_
+# features_importances = pd.DataFrame({'feature':features,
+#                                      'importance':importances}).sort_values(by='importance', 
+#                                                                             ascending=False)
+# best_features = features_importances['feature'].head(20).values
+
+
+#%% 
+# # Extraindo o nome das features
+# best_features = [col.replace('num_transformer__','').replace('cat_transformer__','') for col in best_features]
+# best_features_names = [col for col in best_features if col in X_train.columns]
+
+# best_num_cols = X_train[best_features_names].select_dtypes(include=['int64','float64']).columns.tolist()
+# best_cat_cols = X_train[best_features_names].select_dtypes(include=['object']).columns.tolist()
+
+
+#%% 
+# Melhores hiperparâmetros
+from scipy.stats import randint
+
+## Primeiro, rodar alguns random search para achar um bom range de valores para colocar no grid search
+
+## para RandomSearchCV
+param_distributions = {'rnd_forest__max_depth' : randint(low=10, high=50),
+                 'rnd_forest__min_samples_split': randint(low=5,high=20),
+                 'rnd_forest__n_estimators': randint(low=50,high=500),
+                 'rnd_forest__min_samples_leaf': [2],
+                 }
+## remover hiperparâmetros no model
+## mudar param_grid para param_distributions no grid_search
+## adicionar n_iter=10
+
+## para GridSearchCV
+param_grid = {'rnd_forest__max_depth' : [15,25,50],
+                 'rnd_forest__min_samples_split': [5,10,15],
+                 'rnd_forest__n_estimators': [150,300],
+                 'rnd_forest__min_samples_leaf':[2],
+                 }
+## remover n_iter
+## param_distributions para param_grid
+## remover os hiperparâmetros no model
+
+grid_search = model_selection.GridSearchCV(pipe,
+                                           param_grid=param_grid,
+                                           cv=3,
+                                           scoring='recall',)
+
+grid_search.fit(X_train, y_train)
+
+print('Best params: ',grid_search.best_params_)
 
 
 #%% Dummy classifier
@@ -231,128 +279,6 @@ else:
 print(f'Se o modelo chutar {most_frequent} para todas as predições, ele está certo em {(model_selection.cross_val_score(dummy_clf, X_train, y_train, cv=5, scoring='accuracy').mean())}% das vezes')
 
 
-#%% Melhores hiperparâmetros
-from scipy.stats import randint
-
-## Primeiro, rodar alguns random search para achar um bom range de valores para colocar no grid search
-
-## para RandomSearchCV
-param_distribution = {'rnd_forest__max_depth' : randint(low=4, high=15),
-                 'rnd_forest__min_samples_split': randint(low=5,high=20),
-                 'rnd_forest__n_estimators': randint(low=2,high=20)}
-## adicionar n_inter=10
-
-## para GridSearchCV
-param_grid = {'rnd_forest__max_depth' : [3,4,7,9],
-                 'rnd_forest__min_samples_split': [6,10,12,15],
-                 'rnd_forest__n_estimators': [3,6,14,17]}
-
-grid_search = model_selection.GridSearchCV(pipe,
-                                                 param_grid=param_grid,
-                                                 cv=4,
-                                                 scoring='recall',)
-
-grid_search.fit(X_train, y_train)
-
-print('Best params: ',grid_search.best_params_)
-
-
-#%% testando modelo e criando um log de resultados dos modelos
-mlflow.set_tracking_uri('http://localhost:5000')
-
-mlflow.set_experiment("Sinistro")
-
-with mlflow.start_run(run_name=model.__str__()):
-    
-    pipe.fit(X_train, y_train)
-    y_train_pred = model_selection.cross_val_predict(pipe, X_train, y_train, cv=5)
-    y_train_proba = model_selection.cross_val_predict(pipe,X_train, y_train, cv=5, method='predict_proba')
-
-    y_test_pred = pipe.predict(X_test)
-    y_test_proba = pipe.predict_proba(X_test)
-    
-    accuracy = metrics.accuracy_score(y_train, y_train_pred)
-    matrix = metrics.confusion_matrix(y_train, y_train_pred)
-    precision = metrics.precision_score(y_train, y_train_pred)
-    recall = metrics.recall_score(y_train, y_train_pred)
-    f1_score = metrics.f1_score(y_train, y_train_pred)
-    roc_auc = metrics.roc_auc_score(y_train, y_train_pred)
-    auc_pr = metrics.average_precision_score(y_train, y_train_proba[:,1])
-
-    recall_test = metrics.recall_score(y_test, y_test_pred)
-    auc_pr_test = metrics.average_precision_score(y_test, y_test_proba[:,1])
-
-    print('AUC-PR ', auc_pr)
-    print('Accuracy ', accuracy)
-    print(matrix)
-    print('Precision ',precision)
-    print('Recall ',recall)
-    print('F1 ',f1_score)
-    print('ROC AUC ',roc_auc)
-    print(metrics.classification_report(y_test, y_test_pred))
-
-    mlflow.log_metrics({
-        'train_Accuracy':accuracy,
-        'train_Precision':precision,
-        'train_Recall':recall,
-        'train_F1':f1_score,
-        'train_roc_auc':roc_auc,
-        'train_auc_pr':auc_pr,
-        'test_recall':recall_test,
-        'test_auc_pr':auc_pr_test
-    })
-
-
-#%% 
-# Achando as melhores features para simplificar o modelo
-pipe.fit(X_train, y_train)
-best_model = pipe.named_steps['rnd_forest']
-features = pipe.named_steps['preprocessor'].get_feature_names_out()
-importances = best_model.feature_importances_
-features_importances = pd.DataFrame({'feature':features,
-                                     'importance':importances}).sort_values(by='importance', 
-                                                                            ascending=False)
-best_features = features_importances['feature'].head(16).values
-
-#%% 
-# Extraindo o nome das features
-best_features = [col.replace('num_transformer__','').replace('cat_transformer__','') for col in best_features]
-best_features_names = [col for col in best_features if col in X_train.columns]
-
-best_num_cols = X_train[best_features_names].select_dtypes(include=['int64','float64']).columns.tolist()
-best_cat_cols = X_train[best_features_names].select_dtypes(include=['object']).columns.tolist()
-
-
-#%% 
-# Pipelines para as best_features_names
-num_pipeline = pipeline.Pipeline([
-    ('scaler', preprocessing.RobustScaler()),
-])
-
-cat_pipeline = pipeline.Pipeline([
-    ('input_cat',impute.SimpleImputer(strategy='most_frequent')),
-    ('onehot', preprocessing.OneHotEncoder(handle_unknown='ignore')),
-])
-
-preprocessor = compose.ColumnTransformer(
-    transformers=[
-        ('num_transformer', num_pipeline, best_num_cols),
-        ('cat_transformer', cat_pipeline, best_cat_cols),
-    ]
-)
-
-model = ensemble.RandomForestClassifier(random_state=42,
-                                        class_weight='balanced',
-                                        max_depth=8,
-                                        min_samples_split=6,
-                                        n_estimators=15)
-
-pipe = pipeline.Pipeline([
-    ('preprocessor',preprocessor),
-    ('rnd_forest', model)
-])
-
-
 #%% 
 # testando modelo com best_features_names e logando os resultados
 mlflow.set_tracking_uri('http://localhost:5000')
@@ -361,12 +287,12 @@ mlflow.set_experiment("Sinistro")
 
 with mlflow.start_run(run_name=model.__str__()):
     
-    pipe.fit(X_train[best_features_names], y_train)
-    y_train_pred_best = model_selection.cross_val_predict(pipe, X_train[best_features_names], y_train, cv=3)
-    y_train_proba_best = model_selection.cross_val_predict(pipe,X_train[best_features_names], y_train, cv=3, method='predict_proba')
+    pipe.fit(X_train, y_train)
+    y_train_pred_best = model_selection.cross_val_predict(pipe, X_train, y_train, cv=3)
+    y_train_proba_best = model_selection.cross_val_predict(pipe,X_train, y_train, cv=3, method='predict_proba')
 
-    y_test_pred_best = pipe.predict(X_test[best_features_names])
-    y_test_proba_best = pipe.predict_proba(X_test[best_features_names])
+    y_test_pred_best = pipe.predict(X_test)
+    y_test_proba_best = pipe.predict_proba(X_test)
 
     matrix_best = metrics.confusion_matrix(y_train, y_train_pred_best)
     precision_best = metrics.precision_score(y_train, y_train_pred_best)
@@ -377,7 +303,6 @@ with mlflow.start_run(run_name=model.__str__()):
     test_precision_best = metrics.precision_score(y_test, y_test_pred_best)
     test_recall_best = metrics.recall_score(y_test, y_test_pred_best)
     test_auc_pr_best = metrics.average_precision_score(y_test, y_test_proba_best[:,1])
-
 
     print('Precision ',precision_best)
     print('Recall ',recall_best)
@@ -396,9 +321,17 @@ with mlflow.start_run(run_name=model.__str__()):
     })
 
 
+#%%
+top_best_features = pd.DataFrame({
+    'feature': pipe.named_steps['preprocessor'].get_feature_names_out(),
+    'importance':pipe.named_steps['best_features'].scores_
+})
+top_best_features.sort_values(by='importance', ascending=False).head(20).reset_index(drop=True)
+
+
 #%% 
 # Achando melhor threshold
-y_probas_best = model_selection.cross_val_predict(pipe, X_train[best_features_names], y_train, cv=3, method='predict_proba')[:,1]
+y_probas_best = model_selection.cross_val_predict(pipe, X_train, y_train, cv=3, method='predict_proba')[:,1]
 precisions, recalls, thresholds = metrics.precision_recall_curve(y_train, y_probas_best)
 
 min_recall = 0.9
@@ -415,26 +348,20 @@ print(metrics.classification_report(y_test, w_threshold))
 
 #%%
 class predictor:
-    def __init__(self, pipeline, features_names, threshold):
+    def __init__(self, pipeline, threshold):
         self.pipeline = pipeline
-        self.features = features_names
         self.threshold = threshold
     
     def  predict(self, X):
-        data = X[self.features].copy()
-        proba = self.pipeline.predict_proba(data[self.features])[:,1]
+        data = X.copy()
+        proba = self.pipeline.predict_proba(data)[:,1]
         return (proba >= self.threshold).astype(int)
 
     def predict_proba(self, X):
-        data = X[self.features].copy()
+        data = X.copy()
         return self.pipeline.predict_proba(data)
     
 final_model = predictor(
     pipeline=pipe,
-    features_names = best_features_names,
     threshold = best_threshold
 )
-
-#%%
-
-joblib.dump(final_model, 'modelo_sinistro_v1_0.pkl')
