@@ -1,19 +1,18 @@
 #%% 
 # Imports
 import pandas as pd
-import seaborn as sns
 import numpy as np
-import matplotlib.pyplot as plt
 
 from sklearn import(model_selection, impute , preprocessing, compose, metrics,
                     ensemble, pipeline, dummy, tree, feature_selection)
 import mlflow
-import joblib
 
 
 ## configs
 pd.set_option('display.max_columns', None)
-sns.set_theme(style='whitegrid')
+
+mlflow.set_tracking_uri('http://localhost:5000')
+mlflow.set_experiment("Sinistro")
 
 #%% iniciando log de resultados dos modelos
 mlflow.set_tracking_uri('http://localhost:5000')
@@ -22,12 +21,15 @@ mlflow.set_experiment("Sinistro")
 #%%
 # Import
 ## fontes dos dados: https://dadosabertos.sp.gov.br/dataset/sinistros-infosiga
-raw = pd.read_csv('data/sinistros_2022-2025.csv', 
+raw = pd.read_csv('../data/sinistros_2022-2025.csv', 
                   encoding='latin-1', 
                   on_bad_lines='skip', 
                   sep=';', 
                   decimal=',')
 sinistro = raw.copy()
+
+#%%
+sample = sinistro.head(250)
 
 
 #%%
@@ -257,7 +259,7 @@ param_grid = {'rnd_forest__max_depth' : [15,25,50],
 grid_search = model_selection.GridSearchCV(pipe,
                                            param_grid=param_grid,
                                            cv=3,
-                                           scoring='recall',)
+                                           scoring='f1',)
 
 grid_search.fit(X_train, y_train)
 
@@ -281,9 +283,6 @@ print(f'Se o modelo chutar {most_frequent} para todas as predições, ele está 
 
 #%% 
 # testando modelo com best_features_names e logando os resultados
-mlflow.set_tracking_uri('http://localhost:5000')
-
-mlflow.set_experiment("Sinistro")
 
 with mlflow.start_run(run_name=model.__str__()):
     

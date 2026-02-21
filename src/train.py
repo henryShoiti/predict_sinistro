@@ -21,6 +21,7 @@ preprocess.remove_columns(df)
 preprocess.create_target(df)
 
 # Split
+
 target = 'acidente_grave'
 X = df.drop(columns=[target])
 y = df[target]
@@ -52,11 +53,11 @@ selector = feature_selection.SelectKBest(score_func=feature_selection.mutual_inf
 
 model = ensemble.RandomForestClassifier(random_state=42,
                                         class_weight='balanced',
-                                        max_depth=15,
-                                        min_samples_leaf=2,
-                                        min_samples_split=15,
-                                        n_estimators=100,
-                                        n_jobs=1)
+                                        max_depth=29,
+                                        min_samples_leaf=10,
+                                        min_samples_split=14,
+                                        n_estimators=300,
+                                        n_jobs=-1)
 
 pipe = pipeline.Pipeline([
     ('data_types', preprocess.data_types()),
@@ -72,12 +73,9 @@ with mlflow.start_run(run_name=model.__str__()):
     y_train_pred = model_selection.cross_val_predict(pipe, X_train, y_train, cv=3)
     y_train_proba = model_selection.cross_val_predict(pipe,X_train, y_train, cv=3, method='predict_proba')
     
-    accuracy = metrics.accuracy_score(y_train, y_train_pred)
-    matrix = metrics.confusion_matrix(y_train, y_train_pred)
     precision = metrics.precision_score(y_train, y_train_pred)
     recall = metrics.recall_score(y_train, y_train_pred)
     f1_score = metrics.f1_score(y_train, y_train_pred)
-    roc_auc = metrics.roc_auc_score(y_train, y_train_pred)
     auc_pr = metrics.average_precision_score(y_train, y_train_proba[:,1])
 
     ## achando o threshold
@@ -88,23 +86,27 @@ with mlflow.start_run(run_name=model.__str__()):
     index_best = np.argmax(precisions[:-1][mask])
     best_threshold = thresholds[mask][index_best]
 
-    y_test_proba = pipe.predict_proba(X_test)[:,1]
-    y_pred_threshold= ((y_test_proba > best_threshold).astype(int)) ## predição com threshold
+    y_pred = pipe.predict(X_test)
+    y_pred_proba = pipe.predict_proba(X_test)[:,1]
+    y_pred_threshold= ((y_pred_proba > best_threshold).astype(int)) ## predição com threshold
 
     precision_test = metrics.precision_score(y_test, y_pred_threshold)
     recall_test = metrics.recall_score(y_test, y_pred_threshold)
-    auc_pr_test = metrics.average_precision_score(y_test, y_test_proba)
+    f1_test = metrics.f1_score(y_test, y_pred_threshold)
+    auc_pr_test = metrics.average_precision_score(y_test, y_pred_proba)
+    log_loss_test = metrics.log_loss(y_test, y_pred)
 
     mlflow.log_metrics({
-        'train_Accuracy':accuracy,
         'train_Precision':precision,
         'train_Recall':recall,
         'train_F1':f1_score,
-        'train_roc_auc':roc_auc,
         'train_auc_pr':auc_pr,
 
+        # with threshold to precision=0.9
         'test_precision':precision_test,
         'test_recall':recall_test,
-        'test_auc_pr':auc_pr_test
+        'test_auc_pr':auc_pr_test,
+        'log_loss':log_loss_test,
+        'test_f1':f1_test
     })
 
