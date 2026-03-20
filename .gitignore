@@ -3,11 +3,13 @@ data/
 
 # Logs
 mlruns/
-
+mlartifacts/
+mlflow.db
 # Caches do Python
 __pycache__/
 *.pyc
 
 # Ambientes
 venv/
+.venv/
 .env
