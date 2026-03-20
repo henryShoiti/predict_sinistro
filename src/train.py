@@ -10,13 +10,13 @@ mlflow.set_experiment('Sinistros')
 mlflow.sklearn.autolog()
 
 ## Dados
-sinistro = pd.read_csv('../data/sinistros_2022-2025.csv', 
-                       encoding='latin-1', 
-                       on_bad_lines='skip', 
-                       sep=';', 
-                       decimal=',')
-df = sinistro.copy()
+print("Carregando dados...")
+sinistro = pd.read_csv('../data_sample/sample.csv')
 
+df = sinistro.copy()
+print(f'Foram carregados {sinistro.shape[0]} linhas e {sinistro.shape[1]} colunas.')
+
+print("Pré-processando dados...")
 preprocess.remove_columns(df)
 preprocess.create_target(df)
 
@@ -67,25 +67,36 @@ pipe = pipeline.Pipeline([
     ('rnd_forest', model),
 ])
 
+print("Iniciando treinamento...")
 with mlflow.start_run(run_name=model.__str__()):
     
     pipe.fit(X_train, y_train)
+    print("Modelo treinado!")
+    print("Calculando métricas no treino (cross-validation)...")
     y_train_pred = model_selection.cross_val_predict(pipe, X_train, y_train, cv=3)
-    y_train_proba = model_selection.cross_val_predict(pipe,X_train, y_train, cv=3, method='predict_proba')
+    y_train_proba = model_selection.cross_val_predict(pipe, X_train, y_train, cv=3, method='predict_proba')[:,1]
     
     precision = metrics.precision_score(y_train, y_train_pred)
     recall = metrics.recall_score(y_train, y_train_pred)
     f1_score = metrics.f1_score(y_train, y_train_pred)
-    auc_pr = metrics.average_precision_score(y_train, y_train_proba[:,1])
+    auc_pr = metrics.average_precision_score(y_train, y_train_proba)
+
+    print('Precision_train: ', precision)
+    print('Recall_train: ', recall)
+    print('f1_score_train: ', f1_score)
+    print('auc_pr_train: ', auc_pr)
+
 
     ## achando o threshold
-    y_probas_cv = model_selection.cross_val_predict(pipe, X_train, y_train, cv=3, method='predict_proba')[:,1]
-    precisions, recalls, thresholds = metrics.precision_recall_curve(y_train,y_probas_cv)
+    print("Encontrando melhor threshold...")
+    precisions, recalls, thresholds = metrics.precision_recall_curve(y_train,y_train_proba)
     min_recall = 0.9
     mask = recalls[:-1] >= min_recall
     index_best = np.argmax(precisions[:-1][mask])
     best_threshold = thresholds[mask][index_best]
+    print(f"Threshold de {best_threshold} encontrado")
 
+    print("Avaliando no conjunto de teste...")
     y_pred = pipe.predict(X_test)
     y_pred_proba = pipe.predict_proba(X_test)[:,1]
     y_pred_threshold= ((y_pred_proba > best_threshold).astype(int)) ## predição com threshold
@@ -95,6 +106,12 @@ with mlflow.start_run(run_name=model.__str__()):
     f1_test = metrics.f1_score(y_test, y_pred_threshold)
     auc_pr_test = metrics.average_precision_score(y_test, y_pred_proba)
     log_loss_test = metrics.log_loss(y_test, y_pred)
+
+    print('Precision_test: ', precision_test)
+    print('Recall_test: ', recall_test)
+    print('f1_score_test: ', f1_test)
+    print('auc_pr_test: ', auc_pr_test)
+    print('Log Loss: ', log_loss_test)
 
     mlflow.log_metrics({
         'train_Precision':precision,
